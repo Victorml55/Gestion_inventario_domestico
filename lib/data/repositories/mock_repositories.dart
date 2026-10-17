@@ -3,6 +3,7 @@ import '../../core/date_utils.dart';
 import '../models/models.dart';
 import 'carrito_repository.dart';
 import 'producto_repository.dart';
+import 'calendario_repository.dart';
 
 class MockProductoRepository implements ProductoRepository {
   final _datos = <ProductoResumen>[
@@ -73,4 +74,24 @@ class MockCarritoRepository implements CarritoRepository {
     _items.clear();
     _emit();
   }
+}
+
+class MockCalendarioRepository implements CalendarioRepository {
+  final ProductoRepository _productos;
+  MockCalendarioRepository(this._productos);
+
+  @override
+  Future<Map<DateTime, List<ProductoResumen>>> getAlertasPorDia() async {
+    final mapa = <DateTime, List<ProductoResumen>>{};
+    for (final p in await _productos.getAlertas()) {
+      final f = p.proximaCaducidad;
+      if (f == null) continue; // sin fecha no aparece en el calendario
+      mapa.putIfAbsent(soloFecha(f), () => []).add(p);
+    }
+    return mapa;
+  }
+
+  @override
+  Future<List<ProductoResumen>> getAlertasDeDia(DateTime dia) async =>
+      (await getAlertasPorDia())[soloFecha(dia)] ?? [];
 }
