@@ -29,11 +29,14 @@ class App extends StatelessWidget {
     return MultiProvider(
       providers: [
         // ---------- Repositorios (cambiar Mock* por los reales luego) ----------
+        Provider<ProductoRepository>(
+        create: (_) => MockProductoRepository(),
+        ),
         Provider<CarritoRepository>(
         create: (c) => MockCarritoRepository(c.read<ProductoRepository>()),
         ),
         Provider<CalendarioRepository>(
-          create: (c) => MockCalendarioRepository(c.read<ProductoRepository>()),
+        create: (c) => MockCalendarioRepository(c.read<ProductoRepository>()),
         ),
 
         // ---------- Providers de estado (ChangeNotifier) ----------
