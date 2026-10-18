@@ -1,7 +1,6 @@
-import '../models/models.dart';
+import '../models/producto_resumen.dart';
 
 abstract class CalendarioRepository {
-  /// fecha normalizada a medianoche.
   Future<Map<DateTime, List<ProductoResumen>>> getAlertasPorDia();
   Future<List<ProductoResumen>> getAlertasDeDia(DateTime dia);
 }

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
-import '../../core/date_utils.dart';
 import '../../data/models/models.dart';
 import '../providers/calendario_provider.dart';
 import '../widgets/estado_style.dart';
@@ -68,7 +67,7 @@ class _CalendarioScreenState extends State<CalendarioScreen> {
                             color: Theme.of(context)
                                 .colorScheme
                                 .primary
-                                .withOpacity(0.4),
+                                 .withValues(alpha: 0.4),
                             shape: BoxShape.circle,
                           ),
                           selectedDecoration: BoxDecoration(

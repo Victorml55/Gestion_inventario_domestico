@@ -1,0 +1,1486 @@
+﻿
+// ==========================================
+// ARCHIVO: main.dart
+// ==========================================
+
+import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:intl/date_symbol_data_local.dart';
+import 'package:provider/provider.dart';
+
+import 'core/routes.dart';
+// --- IMPORTACIONES DE TUS REPOSITORIOS REALES ---
+import 'data/repositories/calendario_repository.dart';
+import 'data/repositories/calendario_repository_impl.dart';
+import 'data/repositories/carrito_repository.dart';
+import 'data/repositories/carrito_repository_impl.dart';
+import 'data/repositories/producto_repository.dart';
+import 'data/repositories/producto_repository_impl.dart';
+// --- IMPORTACIÃ“N DEL SERVICIO DE NOTIFICACIONES ---
+import 'data/services/notification_service.dart';
+
+import 'ui/providers/calendario_provider.dart';
+import 'ui/providers/inventario_provider.dart';
+import 'ui/screens/calendario_screen.dart';
+import 'ui/screens/home_screen.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // 1. Inicializar formatos de fecha
+  await initializeDateFormatting('es_MX');
+  
+  // 2. Inicializar el servicio de notificaciones locales
+  await NotificationService.init();
+
+  runApp(const App());
+}
+
+class App extends StatelessWidget {
+  const App({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MultiProvider(
+      providers: [
+        // ---------- Repositorios Reales (SQLite) ----------
+        Provider<ProductoRepository>(
+          create: (_) => ProductoRepositoryImpl(),
+        ),
+        Provider<CarritoRepository>(
+          create: (_) => CarritoRepositoryImpl(),
+        ),
+        Provider<CalendarioRepository>(
+          create: (c) => CalendarioRepositoryImpl(c.read<ProductoRepository>()),
+        ),
+
+        // ---------- Providers de estado (ChangeNotifier) ----------
+        ChangeNotifierProvider<InventarioProvider>(
+          create: (c) => InventarioProvider(c.read<ProductoRepository>()),
+        ),
+        ChangeNotifierProvider<CalendarioProvider>(
+          create: (c) => CalendarioProvider(c.read<CalendarioRepository>()),
+        ),
+      ],
+      child: MaterialApp(
+        title: 'Alacena',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
+
+        // LocalizaciÃ³n (necesaria para table_calendar y DateFormat en espaÃ±ol)
+        locale: const Locale('es', 'MX'),
+        supportedLocales: const [Locale('es', 'MX'), Locale('en')],
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+
+        initialRoute: Routes.home,
+        routes: {
+          Routes.home: (_) => const HomeScreen(),
+          Routes.calendario: (_) => const CalendarioScreen(),
+          // Pendientes: placeholders
+          Routes.carrito: (_) => const _Pendiente('Carrito'),
+          Routes.productoForm: (_) => const _Pendiente('Nuevo producto'),
+        },
+      ),
+    );
+  }
+}
+
+class _Pendiente extends StatelessWidget {
+  final String titulo;
+  const _Pendiente(this.titulo);
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: Text(titulo)),
+        body: Center(child: Text(titulo)),
+      );
+}
+
+// ==========================================
+// ARCHIVO: constants.dart
+// ==========================================
+
+const int kDiasPorCaducar = 7;
+
+class DbTables {
+  static const categoria = 'categoria';
+  static const tienda = 'tienda';
+  static const producto = 'producto';
+  static const lote = 'lote';
+  static const historialCompras = 'historial_compras';
+  static const carritoItem = 'carrito_item';
+}
+
+// ==========================================
+// ARCHIVO: date_utils.dart
+// ==========================================
+
+DateTime hoy() {
+  final now = DateTime.now();
+  return DateTime(now.year, now.month, now.day);
+}
+
+DateTime normalizarFecha(DateTime date) {
+  return DateTime(date.year, date.month, date.day);
+}
+
+String dateToSql(DateTime date) {
+  return "${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
+}
+
+DateTime sqlToDate(String dateStr) {
+  return DateTime.parse(dateStr);
+}
+
+// Alias para que la UI de tu compaÃ±ero siga funcionando
+DateTime soloFecha(DateTime date) => normalizarFecha(date);
+
+// ==========================================
+// ARCHIVO: errors.dart
+// ==========================================
+
+class AppException implements Exception {
+  final String mensaje;
+  AppException(this.mensaje);
+  @override
+  String toString() => mensaje;
+}
+
+// ==========================================
+// ARCHIVO: routes.dart
+// ==========================================
+
+class Routes {
+  static const home = '/';
+  static const calendario = '/calendario';
+  static const carrito = '/carrito';
+  static const productoForm = '/producto/form';
+  static const consumo = '/producto/consumo';
+  static const alarmaDia = '/alarma-dia';
+  static const categorias = '/categorias';
+  static const tiendas = '/tiendas';
+  static const historial = '/historial';
+}
+
+// ==========================================
+// ARCHIVO: db_helper.dart
+// ==========================================
+
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+
+
+class DbHelper {
+  static final DbHelper _instance = DbHelper._internal();
+  factory DbHelper() => _instance;
+  DbHelper._internal();
+
+  static Database? _database;
+
+  Future<Database> get database async {
+    if (_database != null) return _database!;
+    _database = await _initDb();
+    return _database!;
+  }
+
+  Future<Database> _initDb() async {
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, 'alacena.db');
+
+    return await openDatabase(
+      path,
+      version: 1,
+      onConfigure: (db) async {
+        await db.execute('PRAGMA foreign_keys = ON');
+      },
+      onCreate: _onCreate,
+    );
+  }
+
+  Future<void> _onCreate(Database db, int version) async {
+    // 1. Tablas
+    await db.execute('''
+      CREATE TABLE categoria (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL UNIQUE CHECK (length(trim(nombre)) > 0),
+        icono TEXT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE tienda (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL UNIQUE CHECK (length(trim(nombre)) > 0),
+        direccion TEXT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE producto (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nombre TEXT NOT NULL CHECK (length(trim(nombre)) > 0),
+        categoria_id INTEGER NOT NULL,
+        imagen_path TEXT,
+        unidad TEXT NOT NULL DEFAULT 'pza',
+        stock_minimo INTEGER NOT NULL DEFAULT 1 CHECK (stock_minimo >= 0),
+        ultima_tienda_id INTEGER,
+        FOREIGN KEY (categoria_id) REFERENCES categoria(id) ON DELETE RESTRICT,
+        FOREIGN KEY (ultima_tienda_id) REFERENCES tienda(id) ON DELETE SET NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE lote (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        producto_id INTEGER NOT NULL,
+        cantidad INTEGER NOT NULL CHECK (cantidad >= 0),
+        fecha_caducidad TEXT,
+        alarma_activa INTEGER NOT NULL DEFAULT 1 CHECK (alarma_activa IN (0,1)),
+        fecha_ingreso TEXT NOT NULL,
+        FOREIGN KEY (producto_id) REFERENCES producto(id) ON DELETE CASCADE
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE historial_compras (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        producto_id INTEGER NOT NULL,
+        tienda_id INTEGER NOT NULL,
+        cantidad INTEGER NOT NULL CHECK (cantidad > 0),
+        precio REAL CHECK (precio IS NULL OR precio >= 0),
+        fecha_compra TEXT NOT NULL,
+        FOREIGN KEY (producto_id) REFERENCES producto(id) ON DELETE CASCADE,
+        FOREIGN KEY (tienda_id) REFERENCES tienda(id) ON DELETE RESTRICT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE carrito_item (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        producto_id INTEGER NOT NULL UNIQUE,
+        cantidad INTEGER NOT NULL DEFAULT 1 CHECK (cantidad > 0),
+        FOREIGN KEY (producto_id) REFERENCES producto(id) ON DELETE CASCADE
+      )
+    ''');
+
+    // 2. Ãndices
+    await db.execute('CREATE INDEX idx_lote_producto ON lote(producto_id)');
+    await db.execute('CREATE INDEX idx_lote_caducidad ON lote(fecha_caducidad)');
+    await db.execute('CREATE INDEX idx_historial_producto ON historial_compras(producto_id)');
+
+    // 3. Semilla (Datos iniciales)
+    await _insertarSemilla(db);
+  }
+
+  Future<void> _insertarSemilla(Database db) async {
+    final categorias = ['LÃ¡cteos', 'Carnes', 'Frutas y verduras', 'Despensa', 'Bebidas', 'Limpieza'];
+    for (var cat in categorias) {
+      await db.insert('categoria', {'nombre': cat});
+    }
+
+    final tiendas = [
+      {'nombre': 'Walmart', 'direccion': 'Sucursal Centro'},
+      {'nombre': 'Soriana', 'direccion': 'Sucursal Norte'},
+    ];
+    for (var t in tiendas) {
+      await db.insert('tienda', t);
+    }
+  }
+}
+
+// ==========================================
+// ARCHIVO: carrito_item.dart
+// ==========================================
+
+class CarritoItem {
+  final int? id;
+  final int productoId;
+  final int cantidad;
+
+  CarritoItem({this.id, required this.productoId, required this.cantidad});
+
+  factory CarritoItem.fromMap(Map<String, dynamic> map) => CarritoItem(
+    id: map['id'] as int?,
+    productoId: map['producto_id'] as int,
+    cantidad: map['cantidad'] as int,
+  );
+
+  Map<String, dynamic> toMap() => {
+    if (id != null) 'id': id,
+    'producto_id': productoId,
+    'cantidad': cantidad,
+  };
+}
+
+// ==========================================
+// ARCHIVO: categoria.dart
+// ==========================================
+
+class Categoria {
+  final int? id;
+  final String nombre;
+  final String? icono;
+
+  Categoria({this.id, required this.nombre, this.icono});
+
+  factory Categoria.fromMap(Map<String, dynamic> map) => Categoria(
+    id: map['id'] as int?,
+    nombre: map['nombre'] as String,
+    icono: map['icono'] as String?,
+  );
+
+  Map<String, dynamic> toMap() => {
+    if (id != null) 'id': id,
+    'nombre': nombre,
+    'icono': icono,
+  };
+
+  Categoria copyWith({int? id, String? nombre, String? icono}) => Categoria(
+    id: id ?? this.id,
+    nombre: nombre ?? this.nombre,
+    icono: icono ?? this.icono,
+  );
+}
+
+// ==========================================
+// ARCHIVO: estado_producto.dart
+// ==========================================
+
+enum EstadoProducto { sinExistencia, caducado, porCaducar, porAgotarse, normal }
+
+// ==========================================
+// ARCHIVO: historial_compra.dart
+// ==========================================
+
+import '../../core/date_utils.dart';
+
+class HistorialCompra {
+  final int? id;
+  final int productoId;
+  final int tiendaId;
+  final int cantidad;
+  final double? precio;
+  final DateTime fechaCompra;
+
+  HistorialCompra({
+    this.id,
+    required this.productoId,
+    required this.tiendaId,
+    required this.cantidad,
+    this.precio,
+    required this.fechaCompra,
+  });
+
+  factory HistorialCompra.fromMap(Map<String, dynamic> map) => HistorialCompra(
+    id: map['id'] as int?,
+    productoId: map['producto_id'] as int,
+    tiendaId: map['tienda_id'] as int,
+    cantidad: map['cantidad'] as int,
+    precio: map['precio'] as double?,
+    fechaCompra: sqlToDate(map['fecha_compra']),
+  );
+
+  Map<String, dynamic> toMap() => {
+    if (id != null) 'id': id,
+    'producto_id': productoId,
+    'tienda_id': tiendaId,
+    'cantidad': cantidad,
+    'precio': precio,
+    'fecha_compra': dateToSql(fechaCompra),
+  };
+}
+
+// ==========================================
+// ARCHIVO: lote.dart
+// ==========================================
+
+import '../../core/date_utils.dart';
+
+class Lote {
+  final int? id;
+  final int productoId;
+  final int cantidad;
+  final DateTime? fechaCaducidad; // Nullable para no perecederos
+  final bool alarmaActiva;
+  final DateTime fechaIngreso;
+
+  Lote({
+    this.id,
+    required this.productoId,
+    required this.cantidad,
+    this.fechaCaducidad,
+    this.alarmaActiva = true,
+    required this.fechaIngreso,
+  });
+
+  factory Lote.fromMap(Map<String, dynamic> map) => Lote(
+    id: map['id'] as int?,
+    productoId: map['producto_id'] as int,
+    cantidad: map['cantidad'] as int,
+    fechaCaducidad: map['fecha_caducidad'] != null ? sqlToDate(map['fecha_caducidad']) : null,
+    alarmaActiva: map['alarma_activa'] == 1,
+    fechaIngreso: sqlToDate(map['fecha_ingreso']),
+  );
+
+  Map<String, dynamic> toMap() => {
+    if (id != null) 'id': id,
+    'producto_id': productoId,
+    'cantidad': cantidad,
+    'fecha_caducidad': fechaCaducidad != null ? dateToSql(fechaCaducidad!) : null,
+    'alarma_activa': alarmaActiva ? 1 : 0,
+    'fecha_ingreso': dateToSql(fechaIngreso),
+  };
+}
+
+// ==========================================
+// ARCHIVO: models.dart
+// ==========================================
+
+export 'estado_producto.dart';
+export 'categoria.dart';
+export 'tienda.dart';
+export 'producto.dart';
+export 'lote.dart';
+export 'historial_compra.dart';
+export 'carrito_item.dart';
+export 'producto_resumen.dart';
+
+// ==========================================
+// ARCHIVO: producto.dart
+// ==========================================
+
+class Producto {
+  final int? id;
+  final String nombre;
+  final int categoriaId;
+  final String? imagenPath;
+  final String unidad;
+  final int stockMinimo;
+  final int? ultimaTiendaId;
+
+  Producto({
+    this.id,
+    required this.nombre,
+    required this.categoriaId,
+    this.imagenPath,
+    this.unidad = 'pza',
+    this.stockMinimo = 1,
+    this.ultimaTiendaId,
+  });
+
+  factory Producto.fromMap(Map<String, dynamic> map) => Producto(
+    id: map['id'] as int?,
+    nombre: map['nombre'] as String,
+    categoriaId: map['categoria_id'] as int,
+    imagenPath: map['imagen_path'] as String?,
+    unidad: map['unidad'] as String,
+    stockMinimo: map['stock_minimo'] as int,
+    ultimaTiendaId: map['ultima_tienda_id'] as int?,
+  );
+
+  Map<String, dynamic> toMap() => {
+    if (id != null) 'id': id,
+    'nombre': nombre,
+    'categoria_id': categoriaId,
+    'imagen_path': imagenPath,
+    'unidad': unidad,
+    'stock_minimo': stockMinimo,
+    'ultima_tienda_id': ultimaTiendaId,
+  };
+}
+
+// ==========================================
+// ARCHIVO: producto_resumen.dart
+// ==========================================
+
+import 'producto.dart';
+import 'estado_producto.dart';
+
+class ProductoResumen {
+  final Producto producto;
+  final String categoriaNombre;
+  final int stockTotal;
+  final DateTime? proximaCaducidad;
+  final EstadoProducto estado;
+  final String? ultimaTiendaNombre;
+
+  ProductoResumen({
+    required this.producto,
+    required this.categoriaNombre,
+    required this.stockTotal,
+    this.proximaCaducidad,
+    required this.estado,
+    this.ultimaTiendaNombre,
+  });
+}
+
+// ==========================================
+// ARCHIVO: tienda.dart
+// ==========================================
+
+class Tienda {
+  final int? id;
+  final String nombre;
+  final String? direccion;
+
+  Tienda({this.id, required this.nombre, this.direccion});
+
+  factory Tienda.fromMap(Map<String, dynamic> map) => Tienda(
+    id: map['id'] as int?,
+    nombre: map['nombre'] as String,
+    direccion: map['direccion'] as String?,
+  );
+
+  Map<String, dynamic> toMap() => {
+    if (id != null) 'id': id,
+    'nombre': nombre,
+    'direccion': direccion,
+  };
+}
+
+// ==========================================
+// ARCHIVO: calendario_repository.dart
+// ==========================================
+
+import '../models/producto_resumen.dart';
+
+abstract class CalendarioRepository {
+  Future<Map<DateTime, List<ProductoResumen>>> getAlertasPorDia();
+  Future<List<ProductoResumen>> getAlertasDeDia(DateTime dia);
+}
+
+// ==========================================
+// ARCHIVO: calendario_repository_impl.dart
+// ==========================================
+
+import '../../core/date_utils.dart';
+import '../models/producto_resumen.dart';
+import 'calendario_repository.dart';
+import 'producto_repository.dart';
+
+class CalendarioRepositoryImpl implements CalendarioRepository {
+  final ProductoRepository _productoRepo;
+
+  CalendarioRepositoryImpl(this._productoRepo);
+
+  @override
+  Future<Map<DateTime, List<ProductoResumen>>> getAlertasPorDia() async {
+    final alertas = await _productoRepo.getAlertas();
+    final Map<DateTime, List<ProductoResumen>> mapa = {};
+
+    for (var p in alertas) {
+      if (p.proximaCaducidad != null) {
+        final fecha = normalizarFecha(p.proximaCaducidad!);
+        if (!mapa.containsKey(fecha)) mapa[fecha] = [];
+        mapa[fecha]!.add(p);
+      }
+    }
+    return mapa;
+  }
+
+  @override
+  Future<List<ProductoResumen>> getAlertasDeDia(DateTime dia) async {
+    final mapa = await getAlertasPorDia();
+    return mapa[normalizarFecha(dia)] ?? [];
+  }
+}
+
+// ==========================================
+// ARCHIVO: carrito_repository.dart
+// ==========================================
+
+import 'dart:async';
+import '../models/carrito_item.dart';
+
+abstract class CarritoRepository {
+  Stream<int> watchCantidad();
+  Future<List<CarritoItem>> getItems();
+  Future<void> agregar(int productoId, {int cantidad = 1});
+  Future<void> quitar(int productoId);
+  Future<void> vaciar();
+}
+
+// ==========================================
+// ARCHIVO: carrito_repository_impl.dart
+// ==========================================
+
+import 'dart:async';
+import '../database/db_helper.dart';
+import '../models/carrito_item.dart';
+import 'carrito_repository.dart';
+
+class CarritoRepositoryImpl implements CarritoRepository {
+  final DbHelper _dbHelper = DbHelper();
+  final _controller = StreamController<int>.broadcast();
+
+  CarritoRepositoryImpl() {
+    _emitirConteo(); // Carga inicial
+  }
+
+  Future<void> _emitirConteo() async {
+    final db = await _dbHelper.database;
+    final res = await db.rawQuery('SELECT SUM(cantidad) as total FROM carrito_item');
+    final total = (res.first['total'] as int?) ?? 0;
+    _controller.add(total);
+  }
+
+  @override
+  Stream<int> watchCantidad() => _controller.stream;
+
+  @override
+  Future<List<CarritoItem>> getItems() async {
+    final db = await _dbHelper.database;
+    final res = await db.query('carrito_item');
+    return res.map((e) => CarritoItem.fromMap(e)).toList();
+  }
+
+  @override
+  Future<void> agregar(int productoId, {int cantidad = 1}) async {
+    final db = await _dbHelper.database;
+    
+    // Verificar si ya existe
+    final res = await db.query('carrito_item', where: 'producto_id = ?', whereArgs: [productoId]);
+    if (res.isNotEmpty) {
+      final item = CarritoItem.fromMap(res.first);
+      await db.update(
+        'carrito_item', 
+        {'cantidad': item.cantidad + cantidad}, 
+        where: 'id = ?', 
+        whereArgs: [item.id]
+      );
+    } else {
+      await db.insert('carrito_item', {'producto_id': productoId, 'cantidad': cantidad});
+    }
+    _emitirConteo();
+  }
+
+  @override
+  Future<void> quitar(int productoId) async {
+    final db = await _dbHelper.database;
+    await db.delete('carrito_item', where: 'producto_id = ?', whereArgs: [productoId]);
+    _emitirConteo();
+  }
+
+  @override
+  Future<void> vaciar() async {
+    final db = await _dbHelper.database;
+    await db.delete('carrito_item');
+    _emitirConteo();
+  }
+}
+
+// ==========================================
+// ARCHIVO: compra_repository.dart
+// ==========================================
+
+import '../models/historial_compra.dart';
+import '../models/tienda.dart';
+import '../models/lote.dart';
+
+abstract class CompraRepository {
+  Future<void> registrarCompraConLote(HistorialCompra c, Lote l);
+  Future<List<Tienda>> getTiendasDeProducto(int productoId);
+  Future<List<HistorialCompra>> getHistorial({int? productoId});
+}
+
+// ==========================================
+// ARCHIVO: compra_repository_impl.dart
+// ==========================================
+
+import '../database/db_helper.dart';
+import '../models/historial_compra.dart';
+import '../models/lote.dart';
+import '../models/tienda.dart';
+import 'compra_repository.dart';
+
+class CompraRepositoryImpl implements CompraRepository {
+  final DbHelper _dbHelper = DbHelper();
+
+  @override
+  Future<void> registrarCompraConLote(HistorialCompra c, Lote l) async {
+    final db = await _dbHelper.database;
+    
+    await db.transaction((txn) async {
+      // 1. Insertar compra
+      await txn.insert('historial_compras', c.toMap());
+      
+      // 2. Actualizar Ãºltima tienda del producto
+      await txn.update(
+        'producto', 
+        {'ultima_tienda_id': c.tiendaId}, 
+        where: 'id = ?', 
+        whereArgs: [c.productoId]
+      );
+      
+      // 3. Insertar lote
+      await txn.insert('lote', l.toMap());
+    });
+  }
+
+  @override
+  Future<List<Tienda>> getTiendasDeProducto(int productoId) async {
+    final db = await _dbHelper.database;
+    final res = await db.rawQuery('''
+      SELECT DISTINCT t.* FROM tienda t
+      INNER JOIN historial_compras h ON t.id = h.tienda_id
+      WHERE h.producto_id = ?
+    ''', [productoId]);
+    
+    return res.map((e) => Tienda.fromMap(e)).toList();
+  }
+
+  @override
+  Future<List<HistorialCompra>> getHistorial({int? productoId}) async {
+    final db = await _dbHelper.database;
+    final res = await db.query(
+      'historial_compras',
+      where: productoId != null ? 'producto_id = ?' : null,
+      whereArgs: productoId != null ? [productoId] : null,
+      orderBy: 'fecha_compra DESC',
+    );
+    return res.map((e) => HistorialCompra.fromMap(e)).toList();
+  }
+}
+
+// ==========================================
+// ARCHIVO: producto_repository.dart
+// ==========================================
+
+import '../models/producto.dart';
+import '../models/producto_resumen.dart';
+
+abstract class ProductoRepository {
+  Future<List<ProductoResumen>> getAlertas();
+  Future<List<ProductoResumen>> getTodos({int? categoriaId});
+  Future<ProductoResumen?> getById(int id);
+  Future<int> insertar(Producto p);
+  Future<void> actualizar(Producto p);
+  Future<void> eliminar(int id);
+  Future<void> consumirStock(int productoId, int cantidad); // FEFO
+}
+
+// ==========================================
+// ARCHIVO: producto_repository_impl.dart
+// ==========================================
+
+import '../../core/constants.dart';
+import '../../core/date_utils.dart';
+import '../../core/errors.dart';
+import '../database/db_helper.dart';
+import '../models/estado_producto.dart';
+import '../models/producto.dart';
+import '../models/producto_resumen.dart';
+import 'producto_repository.dart';
+
+class ProductoRepositoryImpl implements ProductoRepository {
+  final DbHelper _dbHelper = DbHelper();
+
+  @override
+  Future<List<ProductoResumen>> getAlertas() async {
+    final todos = await getTodos();
+    return todos.where((p) => p.estado != EstadoProducto.normal).toList();
+  }
+
+  @override
+  Future<List<ProductoResumen>> getTodos({int? categoriaId}) async {
+    final db = await _dbHelper.database;
+    
+    String where = '';
+    List<dynamic> whereArgs = [];
+    if (categoriaId != null) {
+      where = 'WHERE p.categoria_id = ?';
+      whereArgs.add(categoriaId);
+    }
+
+    final res = await db.rawQuery('''
+      SELECT p.*, c.nombre as cat_nombre, t.nombre as tienda_nombre,
+             (SELECT SUM(cantidad) FROM lote WHERE producto_id = p.id AND cantidad > 0) as stock_total,
+             (SELECT MIN(fecha_caducidad) FROM lote WHERE producto_id = p.id AND cantidad > 0) as prox_caducidad
+      FROM producto p
+      LEFT JOIN categoria c ON p.categoria_id = c.id
+      LEFT JOIN tienda t ON p.ultima_tienda_id = t.id
+      $where
+    ''', whereArgs);
+
+    List<ProductoResumen> lista = [];
+    final hoyDate = hoy();
+
+    for (var row in res) {
+      final p = Producto.fromMap(row);
+      final stockTotal = (row['stock_total'] as int?) ?? 0;
+      final proxCadStr = row['prox_caducidad'] as String?;
+      final proxCad = proxCadStr != null ? sqlToDate(proxCadStr) : null;
+
+      EstadoProducto estado = EstadoProducto.normal;
+
+      if (stockTotal == 0) {
+        estado = EstadoProducto.sinExistencia;
+      } else if (proxCad != null && proxCad.isBefore(hoyDate)) {
+        estado = EstadoProducto.caducado;
+      } else if (proxCad != null && proxCad.difference(hoyDate).inDays <= kDiasPorCaducar) {
+        estado = EstadoProducto.porCaducar;
+      } else if (stockTotal <= p.stockMinimo) {
+        estado = EstadoProducto.porAgotarse;
+      }
+
+      lista.add(ProductoResumen(
+        producto: p,
+        categoriaNombre: row['cat_nombre'] as String? ?? 'Sin categorÃ­a',
+        stockTotal: stockTotal,
+        proximaCaducidad: proxCad,
+        estado: estado,
+        ultimaTiendaNombre: row['tienda_nombre'] as String?,
+      ));
+    }
+    return lista;
+  }
+
+  @override
+  Future<ProductoResumen?> getById(int id) async {
+    final lista = await getTodos();
+    try {
+      return lista.firstWhere((p) => p.producto.id == id);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<int> insertar(Producto p) async {
+    final db = await _dbHelper.database;
+    return await db.insert(DbTables.producto, p.toMap());
+  }
+
+  @override
+  Future<void> actualizar(Producto p) async {
+    final db = await _dbHelper.database;
+    await db.update(DbTables.producto, p.toMap(), where: 'id = ?', whereArgs: [p.id]);
+  }
+
+  @override
+  Future<void> eliminar(int id) async {
+    final db = await _dbHelper.database;
+    await db.delete(DbTables.producto, where: 'id = ?', whereArgs: [id]);
+  }
+
+  @override
+  Future<void> consumirStock(int productoId, int cantidad) async {
+    if (cantidad <= 0) return;
+    final db = await _dbHelper.database;
+
+    await db.transaction((txn) async {
+      // 1. Verificar stock total
+      final res = await txn.rawQuery(
+          'SELECT SUM(cantidad) as total FROM lote WHERE producto_id = ? AND cantidad > 0',
+          [productoId]);
+      final total = (res.first['total'] as int?) ?? 0;
+
+      if (total < cantidad) {
+        throw AppException('No hay suficiente stock. Stock actual: $total');
+      }
+
+      // 2. Obtener lotes ordenados por FEFO (First Expired, First Out)
+      final lotesRes = await txn.query(
+        DbTables.lote,
+        where: 'producto_id = ? AND cantidad > 0',
+        whereArgs: [productoId],
+        orderBy: 'fecha_caducidad ASC, id ASC', // FEFO
+      );
+
+      int restante = cantidad;
+      for (var row in lotesRes) {
+        if (restante <= 0) break;
+        
+        final loteId = row['id'] as int;
+        final loteCant = row['cantidad'] as int;
+
+        if (loteCant > restante) {
+          await txn.update(DbTables.lote, {'cantidad': loteCant - restante}, where: 'id = ?', whereArgs: [loteId]);
+          restante = 0;
+        } else {
+          await txn.update(DbTables.lote, {'cantidad': 0}, where: 'id = ?', whereArgs: [loteId]);
+          restante -= loteCant;
+        }
+      }
+    });
+  }
+}
+
+// ==========================================
+// ARCHIVO: notification_service.dart
+// ==========================================
+
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/data/latest_all.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
+
+class NotificationService {
+  static final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
+
+  static Future<void> init() async {
+    tz.initializeTimeZones();
+    
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const iosSettings = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+
+    const initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
+    await _plugin.initialize(initSettings);
+  }
+
+  static Future<void> programarAlarma(int id, String producto, DateTime fecha) async {
+    final tzFecha = tz.TZDateTime.from(fecha, tz.local).add(const Duration(hours: 8)); // 8:00 AM
+    
+    // Si la fecha ya pasÃ³, no programar
+    if (tzFecha.isBefore(tz.TZDateTime.now(tz.local))) return;
+
+    await _plugin.zonedSchedule(
+      id,
+      'Producto por caducar',
+      'El producto "$producto" caduca hoy.',
+      tzFecha,
+      const NotificationDetails(
+        android: AndroidNotificationDetails('caducidad_channel', 'Caducidad',
+            importance: Importance.max, priority: Priority.high),
+        iOS: DarwinNotificationDetails(),
+      ),
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+      payload: 'caducidad',
+    );
+  }
+
+  static Future<void> cancelarTodas() async {
+    await _plugin.cancelAll();
+  }
+}
+
+// ==========================================
+// ARCHIVO: calendario_provider.dart
+// ==========================================
+
+import 'package:flutter/foundation.dart';
+import '../../core/date_utils.dart';
+import '../../data/models/models.dart';
+import '../../data/repositories/calendario_repository.dart';
+
+class CalendarioProvider extends ChangeNotifier {
+  final CalendarioRepository _repo;
+  CalendarioProvider(this._repo);
+
+  Map<DateTime, List<ProductoResumen>> _eventos = {};
+  DateTime diaEnfocado = hoy();
+  DateTime? diaSeleccionado;
+  bool cargando = false;
+  String? error;
+
+  List<ProductoResumen> eventosDe(DateTime dia) => _eventos[soloFecha(dia)] ?? [];
+
+  Future<void> cargar() async {
+    cargando = true;
+    error = null;
+    notifyListeners();
+    try {
+      _eventos = await _repo.getAlertasPorDia();
+    } catch (e) {
+      error = e.toString();
+    }
+    cargando = false;
+    notifyListeners();
+  }
+
+  void seleccionar(DateTime seleccionado, DateTime enfocado) {
+    diaSeleccionado = soloFecha(seleccionado);
+    diaEnfocado = enfocado;
+    notifyListeners();
+  }
+
+  void cambiarEnfoque(DateTime d) => diaEnfocado = d;
+}
+
+// ==========================================
+// ARCHIVO: inventario_provider.dart
+// ==========================================
+
+import 'package:flutter/foundation.dart';
+import '../../data/models/models.dart';
+import '../../data/repositories/producto_repository.dart';
+
+class InventarioProvider extends ChangeNotifier {
+  final ProductoRepository _repo;
+  InventarioProvider(this._repo);
+
+  List<ProductoResumen> alertas = [];
+  bool cargando = false;
+  String? error;
+
+  Future<void> cargar() async {
+    cargando = true;
+    error = null;
+    notifyListeners();
+    try {
+      alertas = await _repo.getAlertas();
+    } catch (e) {
+      error = e.toString();
+    }
+    cargando = false;
+    notifyListeners();
+  }
+}
+
+// ==========================================
+// ARCHIVO: calendario_screen.dart
+// ==========================================
+
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:table_calendar/table_calendar.dart';
+import '../../data/models/models.dart';
+import '../providers/calendario_provider.dart';
+import '../widgets/estado_style.dart';
+import 'dia_alertas_screen.dart';
+
+class CalendarioScreen extends StatefulWidget {
+  const CalendarioScreen({super.key});
+
+  @override
+  State<CalendarioScreen> createState() => _CalendarioScreenState();
+}
+
+class _CalendarioScreenState extends State<CalendarioScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback(
+        (_) => context.read<CalendarioProvider>().cargar());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final prov = context.watch<CalendarioProvider>();
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Calendario de alertas')),
+      body: prov.cargando
+          ? const Center(child: CircularProgressIndicator())
+          : prov.error != null
+              ? Center(child: Text(prov.error!))
+              : SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      TableCalendar<ProductoResumen>(
+                        locale: 'es_MX',
+                        firstDay: DateTime(2020),
+                        lastDay: DateTime(2100),
+                        focusedDay: prov.diaEnfocado,
+                        startingDayOfWeek: StartingDayOfWeek.monday,
+                        calendarFormat: CalendarFormat.month,
+                        availableCalendarFormats: const {
+                          CalendarFormat.month: 'Mes',
+                        },
+                        selectedDayPredicate: (d) =>
+                            prov.diaSeleccionado != null &&
+                            isSameDay(prov.diaSeleccionado, d),
+                        eventLoader: prov.eventosDe,
+                        onPageChanged: prov.cambiarEnfoque,
+                        onDaySelected: (sel, foc) async {
+                          prov.seleccionar(sel, foc);
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              fullscreenDialog: true,
+                              builder: (_) => DiaAlertasScreen(dia: sel),
+                            ),
+                          );
+                          if (context.mounted) {
+                            context.read<CalendarioProvider>().cargar();
+                          }
+                        },
+                        calendarStyle: CalendarStyle(
+                          todayDecoration: BoxDecoration(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .primary
+                                 .withValues(alpha: 0.4),
+                            shape: BoxShape.circle,
+                          ),
+                          selectedDecoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.primary,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        calendarBuilders: CalendarBuilders(
+                          markerBuilder: (context, day, eventos) {
+                            if (eventos.isEmpty) return null;
+                            final n = eventos.length > 5 ? 5 : eventos.length;
+                            return Positioned(
+                              bottom: 4,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  for (var i = 0; i < n; i++)
+                                    Container(
+                                      width: 6,
+                                      height: 6,
+                                      margin: const EdgeInsets.symmetric(
+                                          horizontal: 1),
+                                      decoration: BoxDecoration(
+                                        color: eventos[i].estado.color,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const Divider(),
+                      const _Leyenda(),
+                    ],
+                  ),
+                ),
+    );
+  }
+}
+
+class _Leyenda extends StatelessWidget {
+  const _Leyenda();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 4,
+        children: [
+          for (final e in EstadoProducto.values.where((e) => e != EstadoProducto.normal))
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(e.icono, size: 16, color: e.color),
+                const SizedBox(width: 4),
+                Text(e.etiqueta, style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ==========================================
+// ARCHIVO: dia_alertas_screen.dart
+// ==========================================
+
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+import '../../data/models/models.dart';
+import '../../data/repositories/calendario_repository.dart';
+import '../../data/repositories/carrito_repository.dart';
+import '../widgets/producto_card.dart';
+
+class DiaAlertasScreen extends StatelessWidget {
+  final DateTime dia;
+  const DiaAlertasScreen({super.key, required this.dia});
+
+  @override
+  Widget build(BuildContext context) {
+    final repo = context.read<CalendarioRepository>();
+    final carrito = context.read<CarritoRepository>();
+    final titulo = DateFormat("EEEE d 'de' MMMM yyyy", 'es_MX').format(dia);
+
+    return Scaffold(
+      body: FutureBuilder<List<ProductoResumen>>(
+        future: repo.getAlertasDeDia(dia),
+        builder: (context, snap) {
+          final items = snap.data ?? [];
+          return CustomScrollView(
+            slivers: [
+              SliverAppBar(
+                pinned: true,
+                leading: IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+                title: Text(titulo, style: const TextStyle(fontSize: 16)),
+              ),
+              if (snap.connectionState != ConnectionState.done)
+                const SliverFillRemaining(
+                    child: Center(child: CircularProgressIndicator()))
+              else if (items.isEmpty)
+                const SliverFillRemaining(
+                    child: Center(child: Text('Sin alertas para este dÃ­a')))
+              else ...[
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: Text('${items.length} producto(s) con alerta',
+                        style: Theme.of(context).textTheme.titleSmall),
+                  ),
+                ),
+                SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, i) => ProductoCard(
+                      item: items[i],
+                      onAgregarCarrito: () {
+                        carrito.agregar(items[i].producto.id!);
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text(
+                                '${items[i].producto.nombre} agregado al carrito'),
+                            duration: const Duration(seconds: 1)));
+                      },
+                    ),
+                    childCount: items.length,
+                  ),
+                ),
+                const SliverToBoxAdapter(child: SizedBox(height: 24)),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ==========================================
+// ARCHIVO: home_screen.dart
+// ==========================================
+
+import 'package:badges/badges.dart' as badges;
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../core/routes.dart';
+import '../../data/repositories/carrito_repository.dart';
+import '../providers/inventario_provider.dart';
+import '../widgets/producto_card.dart';
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback(
+        (_) => context.read<InventarioProvider>().cargar());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final prov = context.watch<InventarioProvider>();
+    final carrito = context.read<CarritoRepository>();
+
+    return Scaffold(
+      body: RefreshIndicator(
+        onRefresh: prov.cargar,
+        child: CustomScrollView(
+          slivers: [
+            SliverAppBar(
+              floating: true,
+              snap: true,
+              title: const Text('Mi alacena'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.calendar_month),
+                  onPressed: () => Navigator.pushNamed(context, Routes.calendario),
+                ),
+                StreamBuilder<int>(
+                  stream: carrito.watchCantidad(),
+                  initialData: 0,
+                  builder: (context, snap) {
+                    final n = snap.data ?? 0;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: badges.Badge(
+                        showBadge: n > 0,
+                        position: badges.BadgePosition.topEnd(top: 0, end: 0),
+                        badgeContent: Text('$n',
+                            style: const TextStyle(color: Colors.white, fontSize: 11)),
+                        child: IconButton(
+                          icon: const Icon(Icons.shopping_cart),
+                          onPressed: () => Navigator.pushNamed(context, Routes.carrito),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+            if (prov.cargando && prov.alertas.isEmpty)
+              const SliverFillRemaining(
+                  child: Center(child: CircularProgressIndicator()))
+            else if (prov.error != null)
+              SliverFillRemaining(child: Center(child: Text(prov.error!)))
+            else if (prov.alertas.isEmpty)
+              const SliverFillRemaining(
+                  child: Center(child: Text('Sin alertas, todo en orden ðŸŽ‰')))
+            else
+              SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, i) {
+                    final item = prov.alertas[i];
+                    return ProductoCard(
+                      item: item,
+                      onAgregarCarrito: () {
+                        carrito.agregar(item.producto.id!);
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content: Text('${item.producto.nombre} agregado al carrito'),
+                            duration: const Duration(seconds: 1)));
+                      },
+                    );
+                  },
+                  childCount: prov.alertas.length,
+                ),
+              ),
+            const SliverToBoxAdapter(child: SizedBox(height: 80)),
+          ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => Navigator.pushNamed(context, Routes.productoForm),
+        icon: const Icon(Icons.add),
+        label: const Text('Nuevo'),
+      ),
+    );
+  }
+}
+
+// ==========================================
+// ARCHIVO: estado_style.dart
+// ==========================================
+
+import 'package:flutter/material.dart';
+import '../../data/models/models.dart';
+
+extension EstadoStyle on EstadoProducto {
+  Color get color => switch (this) {
+        EstadoProducto.sinExistencia => Colors.blueGrey.shade700,
+        EstadoProducto.caducado => Colors.red,
+        EstadoProducto.porCaducar => Colors.orange,
+        EstadoProducto.porAgotarse => Colors.amber.shade700,
+        EstadoProducto.normal => Colors.green,
+      };
+
+  IconData get icono => switch (this) {
+        EstadoProducto.sinExistencia => Icons.remove_shopping_cart,
+        EstadoProducto.caducado => Icons.dangerous,
+        EstadoProducto.porCaducar => Icons.hourglass_bottom,
+        EstadoProducto.porAgotarse => Icons.warning_amber,
+        EstadoProducto.normal => Icons.check_circle,
+      };
+
+  String get etiqueta => switch (this) {
+        EstadoProducto.sinExistencia => 'Agotado',
+        EstadoProducto.caducado => 'Caducado',
+        EstadoProducto.porCaducar => 'Por caducar',
+        EstadoProducto.porAgotarse => 'Por agotarse',
+        EstadoProducto.normal => 'Normal',
+      };
+}
+
+// ==========================================
+// ARCHIVO: producto_card.dart
+// ==========================================
+
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import '../../data/models/models.dart';
+import 'estado_style.dart';
+
+class ProductoCard extends StatelessWidget {
+  final ProductoResumen item;
+  final VoidCallback onAgregarCarrito;
+  final VoidCallback? onTap;
+
+  const ProductoCard({
+    super.key,
+    required this.item,
+    required this.onAgregarCarrito,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final p = item.producto;
+    final e = item.estado;
+    final fecha = item.proximaCaducidad;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: IntrinsicHeight(
+          child: Row(
+            children: [
+              Container(width: 6, color: e.color), // franja de estatus
+              Padding(
+                padding: const EdgeInsets.all(10),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: SizedBox(
+                    width: 64,
+                    height: 64,
+                    child: p.imagenPath != null
+                        ? Image.file(File(p.imagenPath!), fit: BoxFit.cover)
+                        : Container(
+                            color: Colors.grey.shade200,
+                            child: const Icon(Icons.inventory_2, color: Colors.grey),
+                          ),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(p.nombre,
+                          style: Theme.of(context).textTheme.titleMedium,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 4),
+                      Chip(
+                        avatar: Icon(e.icono, size: 16, color: Colors.white),
+                        label: Text(e.etiqueta,
+                            style: const TextStyle(color: Colors.white, fontSize: 12)),
+                        backgroundColor: e.color,
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                      ),
+                      Text('Stock: ${item.stockTotal} ${p.unidad}'
+                          '${fecha != null ? '  â€¢  Cad: ${DateFormat('dd/MM/yyyy').format(fecha)}' : ''}',
+                          style: Theme.of(context).textTheme.bodySmall),
+                    ],
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Agregar al carrito',
+                icon: const Icon(Icons.add_shopping_cart),
+                onPressed: onAgregarCarrito,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

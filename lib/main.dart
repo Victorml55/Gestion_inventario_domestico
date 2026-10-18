@@ -4,10 +4,16 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
 
 import 'core/routes.dart';
+// --- IMPORTACIONES DE TUS REPOSITORIOS REALES ---
 import 'data/repositories/calendario_repository.dart';
+import 'data/repositories/calendario_repository_impl.dart';
 import 'data/repositories/carrito_repository.dart';
-import 'data/repositories/mock_repositories.dart';
+import 'data/repositories/carrito_repository_impl.dart';
 import 'data/repositories/producto_repository.dart';
+import 'data/repositories/producto_repository_impl.dart';
+// --- IMPORTACIÓN DEL SERVICIO DE NOTIFICACIONES ---
+import 'data/services/notification_service.dart';
+
 import 'ui/providers/calendario_provider.dart';
 import 'ui/providers/inventario_provider.dart';
 import 'ui/screens/calendario_screen.dart';
@@ -15,7 +21,13 @@ import 'ui/screens/home_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // 1. Inicializar formatos de fecha
   await initializeDateFormatting('es_MX');
+  
+  // 2. Inicializar el servicio de notificaciones locales
+  await NotificationService.init();
+
   runApp(const App());
 }
 
@@ -26,15 +38,15 @@ class App extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        // ---------- Repositorios (cambiar Mock* por los reales luego) ----------
+        // ---------- Repositorios Reales (SQLite) ----------
         Provider<ProductoRepository>(
-          create: (_) => MockProductoRepository(),
+          create: (_) => ProductoRepositoryImpl(),
         ),
         Provider<CarritoRepository>(
-          create: (_) => MockCarritoRepository(),
+          create: (_) => CarritoRepositoryImpl(),
         ),
         Provider<CalendarioRepository>(
-          create: (c) => MockCalendarioRepository(c.read<ProductoRepository>()),
+          create: (c) => CalendarioRepositoryImpl(c.read<ProductoRepository>()),
         ),
 
         // ---------- Providers de estado (ChangeNotifier) ----------
