@@ -37,3 +37,28 @@ class ProductoResumen {
     this.ultimaTiendaNombre,
   });
 }
+
+class Categoria {
+  final int? id;
+  final String nombre;
+  final String? icono;
+  const Categoria({this.id, required this.nombre, this.icono});
+}
+
+class Lote {
+  final int? id;
+  final int productoId;
+  final int cantidad;
+  final DateTime fechaCaducidad;
+  final bool alarmaActiva;
+  final DateTime fechaIngreso;
+
+  const Lote({
+    this.id,
+    required this.productoId,
+    required this.cantidad,
+    required this.fechaCaducidad,
+    this.alarmaActiva = true,
+    required this.fechaIngreso,
+  });
+}

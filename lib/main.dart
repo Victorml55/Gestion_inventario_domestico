@@ -6,14 +6,20 @@ import 'package:provider/provider.dart';
 import 'core/routes.dart';
 import 'data/repositories/calendario_repository.dart';
 import 'data/repositories/carrito_repository.dart';
+import 'data/repositories/categoria_repository.dart';
+import 'data/repositories/lote_repository.dart';
 import 'data/repositories/mock_repositories.dart';
 import 'data/repositories/producto_repository.dart';
 import 'ui/providers/calendario_provider.dart';
+import 'ui/providers/carrito_provider.dart';
 import 'ui/providers/inventario_provider.dart';
 import 'ui/screens/calendario_screen.dart';
-import 'ui/screens/home_screen.dart';
-import 'ui/providers/carrito_provider.dart';
 import 'ui/screens/carrito_screen.dart';
+import 'ui/screens/home_screen.dart';
+import 'ui/screens/producto_form_screen.dart';
+
+// Un solo almacén en memoria compartido por productos y lotes
+final _almacenMock = MockProductoRepository();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,17 +35,17 @@ class App extends StatelessWidget {
     return MultiProvider(
       providers: [
         // ---------- Repositorios (cambiar Mock* por los reales luego) ----------
-        Provider<ProductoRepository>(
-        create: (_) => MockProductoRepository(),
-        ),
+        Provider<ProductoRepository>(create: (_) => _almacenMock),
+        Provider<LoteRepository>(create: (_) => MockLoteRepository(_almacenMock)),
+        Provider<CategoriaRepository>(create: (_) => MockCategoriaRepository()),
         Provider<CarritoRepository>(
-        create: (c) => MockCarritoRepository(c.read<ProductoRepository>()),
+          create: (c) => MockCarritoRepository(c.read<ProductoRepository>()),
         ),
         Provider<CalendarioRepository>(
-        create: (c) => MockCalendarioRepository(c.read<ProductoRepository>()),
+          create: (c) => MockCalendarioRepository(c.read<ProductoRepository>()),
         ),
 
-        // ---------- Providers de estado (ChangeNotifier) ----------
+        // ---------- Estado ----------
         ChangeNotifierProvider<InventarioProvider>(
           create: (c) => InventarioProvider(c.read<ProductoRepository>()),
         ),
@@ -47,15 +53,13 @@ class App extends StatelessWidget {
           create: (c) => CalendarioProvider(c.read<CalendarioRepository>()),
         ),
         ChangeNotifierProvider<CarritoProvider>(
-        create: (c) => CarritoProvider(c.read<CarritoRepository>()),
+          create: (c) => CarritoProvider(c.read<CarritoRepository>()),
         ),
       ],
       child: MaterialApp(
         title: 'Alacena',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
-
-        // Localización (necesaria para table_calendar y DateFormat en español)
         locale: const Locale('es', 'MX'),
         supportedLocales: const [Locale('es', 'MX'), Locale('en')],
         localizationsDelegates: const [
@@ -63,27 +67,14 @@ class App extends StatelessWidget {
           GlobalWidgetsLocalizations.delegate,
           GlobalCupertinoLocalizations.delegate,
         ],
-
         initialRoute: Routes.home,
         routes: {
           Routes.home: (_) => const HomeScreen(),
           Routes.calendario: (_) => const CalendarioScreen(),
-          // Pendientes: placeholders
           Routes.carrito: (_) => const CarritoScreen(),
-          Routes.productoForm: (_) => const _Pendiente('Nuevo producto'),
+          Routes.productoForm: (_) => const ProductoFormScreen(),
         },
       ),
     );
   }
-}
-
-class _Pendiente extends StatelessWidget {
-  final String titulo;
-  const _Pendiente(this.titulo);
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: Text(titulo)),
-        body: Center(child: Text(titulo)),
-      );
 }

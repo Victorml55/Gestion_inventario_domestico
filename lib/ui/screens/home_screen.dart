@@ -93,7 +93,12 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => Navigator.pushNamed(context, Routes.productoForm),
+        onPressed: () async {
+        final guardado = await Navigator.pushNamed(context, Routes.productoForm);
+          if (guardado == true && context.mounted) {
+          context.read<InventarioProvider>().cargar();
+          }
+        },
         icon: const Icon(Icons.add),
         label: const Text('Nuevo'),
       ),

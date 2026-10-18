@@ -38,6 +38,8 @@ dependencies:
   badges: ^3.1.0
   intl: any
   image_picker: ^1.0.0
+  path_provider: ^2.1.0
+  path: ^1.9.0
   
 
   # The following adds the Cupertino Icons font to your application.
