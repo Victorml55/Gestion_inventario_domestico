@@ -7,4 +7,8 @@ abstract class ProductoRepository {
   Future<int> insertar(Producto p);
   Future<void> actualizar(Producto p);
   Future<void> eliminar(int id);
+
+  /// FEFO: descuenta primero del lote que caduca antes.
+  /// Lanza AppException si no alcanza el stock.
+  Future<void> consumirStock(int productoId, int cantidad);
 }

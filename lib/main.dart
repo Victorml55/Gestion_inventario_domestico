@@ -17,6 +17,7 @@ import 'ui/screens/calendario_screen.dart';
 import 'ui/screens/carrito_screen.dart';
 import 'ui/screens/home_screen.dart';
 import 'ui/screens/producto_form_screen.dart';
+import 'ui/screens/inventario_screen.dart';
 
 // Un solo almacén en memoria compartido por productos y lotes
 final _almacenMock = MockProductoRepository();
@@ -73,6 +74,7 @@ class App extends StatelessWidget {
           Routes.calendario: (_) => const CalendarioScreen(),
           Routes.carrito: (_) => const CarritoScreen(),
           Routes.productoForm: (_) => const ProductoFormScreen(),
+          Routes.inventario: (_) => const InventarioScreen(),
         },
       ),
     );

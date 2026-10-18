@@ -8,4 +8,5 @@ class Routes {
   static const categorias = '/categorias';
   static const tiendas = '/tiendas';
   static const historial = '/historial';
+  static const inventario = '/inventario';
 }

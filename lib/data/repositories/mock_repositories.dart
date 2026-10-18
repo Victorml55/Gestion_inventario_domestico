@@ -7,6 +7,8 @@ import 'carrito_repository.dart';
 import 'categoria_repository.dart';
 import 'lote_repository.dart';
 import 'producto_repository.dart';
+import 'dart:math';
+import '../../core/app_exception.dart';
 
 // ======================= CATEGORÍAS =======================
 class MockCategoriaRepository implements CategoriaRepository {
@@ -138,6 +140,40 @@ class MockProductoRepository implements ProductoRepository {
   Future<void> eliminar(int id) async {
     _productos.removeWhere((p) => p.id == id);
     _lotes.removeWhere((l) => l.productoId == id);
+  }
+
+    @override
+  Future<void> consumirStock(int productoId, int cantidad) async {
+    if (cantidad <= 0) throw AppException('La cantidad debe ser mayor a 0');
+
+    final activos = _lotes
+        .where((l) => l.productoId == productoId && l.cantidad > 0)
+        .toList()
+      ..sort((a, b) {
+        final c = a.fechaCaducidad.compareTo(b.fechaCaducidad);
+        return c != 0 ? c : a.id!.compareTo(b.id!);
+      });
+
+    final total = activos.fold<int>(0, (s, l) => s + l.cantidad);
+    if (total < cantidad) {
+      throw AppException('Stock insuficiente: solo hay $total');
+    }
+
+    var resto = cantidad;
+    for (final l in activos) {
+      if (resto == 0) break;
+      final descuento = min(l.cantidad, resto);
+      final i = _lotes.indexWhere((x) => x.id == l.id);
+      _lotes[i] = Lote(
+        id: l.id,
+        productoId: l.productoId,
+        cantidad: l.cantidad - descuento,
+        fechaCaducidad: l.fechaCaducidad,
+        alarmaActiva: l.alarmaActiva,
+        fechaIngreso: l.fechaIngreso,
+      );
+      resto -= descuento;
+    }
   }
 }
 

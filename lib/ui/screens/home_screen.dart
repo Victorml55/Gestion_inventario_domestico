@@ -37,6 +37,14 @@ class _HomeScreenState extends State<HomeScreen> {
               title: const Text('Mi alacena'),
               actions: [
                 IconButton(
+                tooltip: 'Inventario',
+                icon: const Icon(Icons.inventory_2),
+                onPressed: () async {
+                await Navigator.pushNamed(context, Routes.inventario);
+                if (context.mounted) context.read<InventarioProvider>().cargar();
+                },
+                ),
+                IconButton(
                   icon: const Icon(Icons.calendar_month),
                   onPressed: () => Navigator.pushNamed(context, Routes.calendario),
                 ),

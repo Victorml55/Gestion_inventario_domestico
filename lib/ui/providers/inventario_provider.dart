@@ -6,9 +6,15 @@ class InventarioProvider extends ChangeNotifier {
   final ProductoRepository _repo;
   InventarioProvider(this._repo);
 
+  // Pantalla principal (solo alertas)
   List<ProductoResumen> alertas = [];
   bool cargando = false;
   String? error;
+
+  // Inventario completo
+  List<ProductoResumen> todos = [];
+  int? categoriaFiltro;
+  bool cargandoTodos = false;
 
   Future<void> cargar() async {
     cargando = true;
@@ -20,6 +26,19 @@ class InventarioProvider extends ChangeNotifier {
       error = e.toString();
     }
     cargando = false;
+    notifyListeners();
+  }
+
+  Future<void> cargarTodos({int? categoriaId}) async {
+    categoriaFiltro = categoriaId;
+    cargandoTodos = true;
+    notifyListeners();
+    try {
+      todos = await _repo.getTodos(categoriaId: categoriaId);
+    } catch (e) {
+      error = e.toString();
+    }
+    cargandoTodos = false;
     notifyListeners();
   }
 }
