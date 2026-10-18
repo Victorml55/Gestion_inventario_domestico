@@ -46,20 +46,44 @@ class MockProductoRepository implements ProductoRepository {
 }
 
 class MockCarritoRepository implements CarritoRepository {
+  final ProductoRepository _productos;
+  MockCarritoRepository(this._productos);
+
   final _items = <int, int>{};
   final _ctrl = StreamController<int>.broadcast();
 
-  void _emit() => _ctrl.add(_items.values.fold(0, (a, b) => a + b));
+  int get _total => _items.values.fold(0, (a, b) => a + b);
+  void _emit() => _ctrl.add(_total);
 
   @override
   Stream<int> watchCantidad() async* {
-    yield _items.values.fold<int>(0, (a, b) => a + b);
+    yield _total;
     yield* _ctrl.stream;
+  }
+
+  @override
+  Future<List<CarritoLinea>> getLineas() async {
+    final todos = await _productos.getTodos();
+    return [
+      for (final p in todos)
+        if (_items.containsKey(p.producto.id))
+          CarritoLinea(producto: p, cantidad: _items[p.producto.id]!),
+    ];
   }
 
   @override
   Future<void> agregar(int productoId, {int cantidad = 1}) async {
     _items.update(productoId, (v) => v + cantidad, ifAbsent: () => cantidad);
+    _emit();
+  }
+
+  @override
+  Future<void> cambiarCantidad(int productoId, int cantidad) async {
+    if (cantidad <= 0) {
+      _items.remove(productoId);
+    } else {
+      _items[productoId] = cantidad;
+    }
     _emit();
   }
 

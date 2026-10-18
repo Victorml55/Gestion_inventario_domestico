@@ -12,6 +12,8 @@ import 'ui/providers/calendario_provider.dart';
 import 'ui/providers/inventario_provider.dart';
 import 'ui/screens/calendario_screen.dart';
 import 'ui/screens/home_screen.dart';
+import 'ui/providers/carrito_provider.dart';
+import 'ui/screens/carrito_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,11 +29,8 @@ class App extends StatelessWidget {
     return MultiProvider(
       providers: [
         // ---------- Repositorios (cambiar Mock* por los reales luego) ----------
-        Provider<ProductoRepository>(
-          create: (_) => MockProductoRepository(),
-        ),
         Provider<CarritoRepository>(
-          create: (_) => MockCarritoRepository(),
+        create: (c) => MockCarritoRepository(c.read<ProductoRepository>()),
         ),
         Provider<CalendarioRepository>(
           create: (c) => MockCalendarioRepository(c.read<ProductoRepository>()),
@@ -43,6 +42,9 @@ class App extends StatelessWidget {
         ),
         ChangeNotifierProvider<CalendarioProvider>(
           create: (c) => CalendarioProvider(c.read<CalendarioRepository>()),
+        ),
+        ChangeNotifierProvider<CarritoProvider>(
+        create: (c) => CarritoProvider(c.read<CarritoRepository>()),
         ),
       ],
       child: MaterialApp(
@@ -64,7 +66,7 @@ class App extends StatelessWidget {
           Routes.home: (_) => const HomeScreen(),
           Routes.calendario: (_) => const CalendarioScreen(),
           // Pendientes: placeholders
-          Routes.carrito: (_) => const _Pendiente('Carrito'),
+          Routes.carrito: (_) => const CarritoScreen(),
           Routes.productoForm: (_) => const _Pendiente('Nuevo producto'),
         },
       ),
