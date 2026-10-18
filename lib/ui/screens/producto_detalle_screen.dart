@@ -39,7 +39,11 @@ class _ProductoDetalleScreenState extends State<ProductoDetalleScreen> {
         await context.read<ProductoRepository>().getById(widget.productoId);
     final lotes =
         await context.read<LoteRepository>().getPorProducto(widget.productoId);
-    lotes.sort((a, b) => a.fechaCaducidad.compareTo(b.fechaCaducidad));
+    lotes.sort((a, b) {
+      if (a.fechaCaducidad == null) return b.fechaCaducidad == null ? 0 : 1;
+      if (b.fechaCaducidad == null) return -1;
+      return a.fechaCaducidad!.compareTo(b.fechaCaducidad!);
+    });
     return _Datos(resumen, lotes);
   }
 
@@ -47,9 +51,11 @@ class _ProductoDetalleScreenState extends State<ProductoDetalleScreen> {
 
   Color _colorLote(Lote l) {
     if (l.cantidad == 0) return Colors.grey;
+    final f = l.fechaCaducidad;
+    if (f == null) return Colors.green;
     final h = hoy();
-    if (l.fechaCaducidad.isBefore(h)) return Colors.red;
-    if (!l.fechaCaducidad.isAfter(h.add(const Duration(days: kDiasPorCaducar)))) {
+    if (f.isBefore(h)) return Colors.red;
+    if (!f.isAfter(h.add(const Duration(days: kDiasPorCaducar)))) {
       return Colors.orange;
     }
     return Colors.green;
@@ -97,6 +103,8 @@ class _ProductoDetalleScreenState extends State<ProductoDetalleScreen> {
                       Text('Stock mínimo: ${p.stockMinimo} ${p.unidad}'),
                       if (r.proximaCaducidad != null)
                         Text('Próxima caducidad: ${_fmt.format(r.proximaCaducidad!)}'),
+                      if (r.ultimaTiendaNombre != null)
+                        Text('Última tienda: ${r.ultimaTiendaNombre}'),
                     ],
                   ),
                 ),
@@ -115,7 +123,9 @@ class _ProductoDetalleScreenState extends State<ProductoDetalleScreen> {
                         ListTile(
                           leading: Icon(Icons.circle, size: 14, color: _colorLote(lotes[i])),
                           title: Text('${lotes[i].cantidad} ${p.unidad}'),
-                          subtitle: Text('Caduca: ${_fmt.format(lotes[i].fechaCaducidad)}'),
+                          subtitle: Text(lotes[i].fechaCaducidad == null
+                              ? 'Sin caducidad'
+                              : 'Caduca: ${_fmt.format(lotes[i].fechaCaducidad!)}'),
                           trailing: i == primeroFefo
                               ? const Chip(
                                   label: Text('Sale primero'),
