@@ -1,42 +1,58 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:intl/intl.dart';
 import 'package:path/path.dart' as ruta;
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import '../../core/date_utils.dart';
+import '../../core/formato.dart';
 import '../../data/models/models.dart';
 import '../../data/repositories/categoria_repository.dart';
 import '../../data/repositories/lote_repository.dart';
 import '../../data/repositories/producto_repository.dart';
 
+/// Crea un producto (con su primer lote) o edita uno existente.
 class ProductoFormScreen extends StatefulWidget {
-  const ProductoFormScreen({super.key});
+  final Producto? producto;
+  const ProductoFormScreen({super.key, this.producto});
 
   @override
   State<ProductoFormScreen> createState() => _ProductoFormScreenState();
 }
 
 class _ProductoFormScreenState extends State<ProductoFormScreen> {
-  static const _unidades = ['pza', 'kg', 'g', 'L', 'ml', 'paq'];
+  static const _unidadesBase = ['pza', 'kg', 'g', 'L', 'ml', 'paq'];
 
   final _formKey = GlobalKey<FormState>();
-  final _nombre = TextEditingController();
-  final _stockMin = TextEditingController(text: '1');
+  late final TextEditingController _nombre;
+  late final TextEditingController _stockMin;
   final _cantidad = TextEditingController(text: '1');
 
   late final Future<List<Categoria>> _categorias;
+  late final List<String> _unidades;
   int? _categoriaId;
-  String _unidad = 'pza';
+  late String _unidad;
   String? _imagenPath;
   DateTime? _caducidad;
+  bool _sinCaducidad = false;
   bool _alarma = true;
   bool _guardando = false;
+
+  bool get _editando => widget.producto != null;
 
   @override
   void initState() {
     super.initState();
+    final p = widget.producto;
+    _nombre = TextEditingController(text: p?.nombre ?? '');
+    _stockMin = TextEditingController(text: '${p?.stockMinimo ?? 1}');
+    _categoriaId = p?.categoriaId;
+    _unidad = p?.unidad ?? 'pza';
+    _imagenPath = p?.imagenPath;
+    _unidades = [
+      ..._unidadesBase,
+      if (!_unidadesBase.contains(_unidad)) _unidad,
+    ];
     _categorias = context.read<CategoriaRepository>().getTodos();
   }
 
@@ -53,8 +69,8 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
         .pickImage(source: fuente, maxWidth: 1024, imageQuality: 80);
     if (x == null) return;
     final dir = await getApplicationDocumentsDirectory();
-    final destino = ruta.join(
-        dir.path, '${DateTime.now().millisecondsSinceEpoch}${ruta.extension(x.path)}');
+    final destino = ruta.join(dir.path,
+        '${DateTime.now().millisecondsSinceEpoch}${ruta.extension(x.path)}');
     await File(x.path).copy(destino);
     if (mounted) setState(() => _imagenPath = destino);
   }
@@ -107,10 +123,10 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
 
   Future<void> _guardar() async {
     if (!_formKey.currentState!.validate()) return;
-    final cantidad = int.parse(_cantidad.text);
-    if (cantidad > 0 && _caducidad == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Elige la fecha de caducidad del lote')));
+    final cantidad = _editando ? 0 : int.parse(_cantidad.text);
+    if (!_editando && cantidad > 0 && !_sinCaducidad && _caducidad == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Elige la fecha de caducidad o marca "Sin caducidad"')));
       return;
     }
 
@@ -121,21 +137,34 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
 
     setState(() => _guardando = true);
     try {
-      final id = await productos.insertar(Producto(
-        nombre: _nombre.text.trim(),
-        categoriaId: _categoriaId!,
-        imagenPath: _imagenPath,
-        unidad: _unidad,
-        stockMinimo: int.parse(_stockMin.text),
-      ));
-      if (cantidad > 0) {
-        await lotes.insertar(Lote(
-          productoId: id,
-          cantidad: cantidad,
-          fechaCaducidad: _caducidad!,
-          alarmaActiva: _alarma,
-          fechaIngreso: hoy(),
+      if (_editando) {
+        final p = widget.producto!;
+        await productos.actualizar(Producto(
+          id: p.id,
+          nombre: _nombre.text.trim(),
+          categoriaId: _categoriaId!,
+          imagenPath: _imagenPath,
+          unidad: _unidad,
+          stockMinimo: int.parse(_stockMin.text),
+          ultimaTiendaId: p.ultimaTiendaId,
         ));
+      } else {
+        final id = await productos.insertar(Producto(
+          nombre: _nombre.text.trim(),
+          categoriaId: _categoriaId!,
+          imagenPath: _imagenPath,
+          unidad: _unidad,
+          stockMinimo: int.parse(_stockMin.text),
+        ));
+        if (cantidad > 0) {
+          await lotes.insertar(Lote(
+            productoId: id,
+            cantidad: cantidad,
+            fechaCaducidad: _sinCaducidad ? null : _caducidad,
+            alarmaActiva: _sinCaducidad ? false : _alarma,
+            fechaIngreso: hoy(),
+          ));
+        }
       }
       navigator.pop(true);
     } catch (e) {
@@ -153,8 +182,10 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final existeImagen = _imagenPath != null && File(_imagenPath!).existsSync();
     return Scaffold(
-      appBar: AppBar(title: const Text('Nuevo producto')),
+      appBar: AppBar(
+          title: Text(_editando ? 'Editar producto' : 'Nuevo producto')),
       body: Form(
         key: _formKey,
         child: ListView(
@@ -169,7 +200,7 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
                     width: 120,
                     height: 120,
                     color: Colors.grey.shade200,
-                    child: _imagenPath != null
+                    child: existeImagen
                         ? Image.file(File(_imagenPath!), fit: BoxFit.cover)
                         : const Column(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -196,9 +227,12 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
             FutureBuilder<List<Categoria>>(
               future: _categorias,
               builder: (context, snap) {
-                final cats = snap.data ?? [];
+                if (!snap.hasData) return const LinearProgressIndicator();
+                final cats = snap.data!;
                 return DropdownButtonFormField<int>(
-                  initialValue: _categoriaId,
+                  initialValue: cats.any((c) => c.id == _categoriaId)
+                      ? _categoriaId
+                      : null,
                   decoration: const InputDecoration(
                       labelText: 'Categoría', border: OutlineInputBorder()),
                   items: [
@@ -231,40 +265,52 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
                     controller: _stockMin,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
-                        labelText: 'Stock mínimo', border: OutlineInputBorder()),
+                        labelText: 'Stock mínimo',
+                        border: OutlineInputBorder()),
                     validator: (v) => _entero(v),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 24),
-            Text('Primer lote', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 4),
-            Text('Pon cantidad 0 si aún no tienes unidades.',
-                style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _cantidad,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                  labelText: 'Cantidad', border: OutlineInputBorder()),
-              validator: (v) => _entero(v),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: _elegirFecha,
-              icon: const Icon(Icons.event),
-              label: Text(_caducidad == null
-                  ? 'Fecha de caducidad'
-                  : DateFormat('dd/MM/yyyy').format(_caducidad!)),
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Alarma de caducidad'),
-              subtitle: const Text('Avisar el día que caduca'),
-              value: _alarma,
-              onChanged: (v) => setState(() => _alarma = v),
-            ),
+            if (!_editando) ...[
+              const SizedBox(height: 24),
+              Text('Primer lote',
+                  style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 4),
+              Text('Pon cantidad 0 si aún no tienes unidades.',
+                  style: Theme.of(context).textTheme.bodySmall),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _cantidad,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                    labelText: 'Cantidad', border: OutlineInputBorder()),
+                validator: (v) => _entero(v),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Sin caducidad'),
+                subtitle: const Text('Producto no perecedero'),
+                value: _sinCaducidad,
+                onChanged: (v) => setState(() => _sinCaducidad = v),
+              ),
+              if (!_sinCaducidad) ...[
+                OutlinedButton.icon(
+                  onPressed: _elegirFecha,
+                  icon: const Icon(Icons.event),
+                  label: Text(_caducidad == null
+                      ? 'Fecha de caducidad'
+                      : fmtFecha.format(_caducidad!)),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Alarma de caducidad'),
+                  subtitle: const Text('Avisar el día que caduca'),
+                  value: _alarma,
+                  onChanged: (v) => setState(() => _alarma = v),
+                ),
+              ],
+            ],
             const SizedBox(height: 16),
             FilledButton.icon(
               onPressed: _guardando ? null : _guardar,

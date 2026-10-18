@@ -1,8 +1,8 @@
 import '../../core/date_utils.dart';
+import '../models/estado_producto.dart';
 import '../models/producto_resumen.dart';
 import 'calendario_repository.dart';
 import 'producto_repository.dart';
-import '../models/estado_producto.dart';
 
 class CalendarioRepositoryImpl implements CalendarioRepository {
   final ProductoRepository _productoRepo;
@@ -14,14 +14,15 @@ class CalendarioRepositoryImpl implements CalendarioRepository {
     final alertas = await _productoRepo.getAlertas();
     final Map<DateTime, List<ProductoResumen>> mapa = {};
 
-    for (var p in alertas) {
-      if (p.proximaCaducidad != null &&
-    (p.estado == EstadoProducto.caducado ||
-        p.estado == EstadoProducto.porCaducar)) {
-        final fecha = normalizarFecha(p.proximaCaducidad!);
-        if (!mapa.containsKey(fecha)) mapa[fecha] = [];
-        mapa[fecha]!.add(p);
+    for (final p in alertas) {
+      final f = p.proximaCaducidad;
+      if (f == null) continue;
+      // Solo caducados y por caducar tienen un día relevante en el calendario
+      if (p.estado != EstadoProducto.caducado &&
+          p.estado != EstadoProducto.porCaducar) {
+        continue;
       }
+      mapa.putIfAbsent(normalizarFecha(f), () => []).add(p);
     }
     return mapa;
   }

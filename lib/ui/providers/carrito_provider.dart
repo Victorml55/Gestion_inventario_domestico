@@ -46,4 +46,23 @@ class CarritoProvider extends ChangeNotifier {
     await _repo.vaciar();
     await cargar();
   }
+
+  /// Agrega al carrito los productos agotados o por agotarse que aún no
+  /// están en la lista. Devuelve cuántos agregó.
+  Future<int> agregarSugeridos() async {
+    final items = await _repo.getItems();
+    final yaEn = items.map((i) => i.productoId).toSet();
+    final alertas = await _productos.getAlertas();
+    var n = 0;
+    for (final r in alertas) {
+      final falta = r.estado == EstadoProducto.sinExistencia ||
+          r.estado == EstadoProducto.porAgotarse;
+      if (!falta || yaEn.contains(r.producto.id)) continue;
+      final faltan = r.producto.stockMinimo - r.stockTotal + 1;
+      await _repo.agregar(r.producto.id!, cantidad: faltan < 1 ? 1 : faltan);
+      n++;
+    }
+    await cargar();
+    return n;
+  }
 }

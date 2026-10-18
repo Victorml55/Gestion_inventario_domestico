@@ -8,6 +8,8 @@ import '../providers/inventario_provider.dart';
 import '../widgets/producto_card.dart';
 import 'producto_detalle_screen.dart';
 
+enum _FiltroEstado { todos, alertas, normales }
+
 class InventarioScreen extends StatefulWidget {
   const InventarioScreen({super.key});
 
@@ -17,6 +19,7 @@ class InventarioScreen extends StatefulWidget {
 
 class _InventarioScreenState extends State<InventarioScreen> {
   late final Future<List<Categoria>> _categorias;
+  _FiltroEstado _filtro = _FiltroEstado.todos;
 
   @override
   void initState() {
@@ -27,26 +30,48 @@ class _InventarioScreenState extends State<InventarioScreen> {
   }
 
   Future<void> _abrirDetalle(ProductoResumen item) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-          builder: (_) => ProductoDetalleScreen(productoId: item.producto.id!)),
-    );
+    await abrirDetalleProducto(context, item.producto.id!);
     if (mounted) {
       final prov = context.read<InventarioProvider>();
       prov.cargarTodos(categoriaId: prov.categoriaFiltro);
     }
   }
 
+  bool _pasa(ProductoResumen r) => switch (_filtro) {
+        _FiltroEstado.todos => true,
+        _FiltroEstado.alertas => r.estado != EstadoProducto.normal,
+        _FiltroEstado.normales => r.estado == EstadoProducto.normal,
+      };
+
   @override
   Widget build(BuildContext context) {
     final prov = context.watch<InventarioProvider>();
     final carrito = context.read<CarritoRepository>();
+    final lista = prov.todos.where(_pasa).toList();
 
     return Scaffold(
       body: CustomScrollView(
         slivers: [
-          const SliverAppBar(floating: true, snap: true, title: Text('Inventario')),
+          const SliverAppBar(
+              floating: true, snap: true, title: Text('Inventario')),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: SegmentedButton<_FiltroEstado>(
+                segments: const [
+                  ButtonSegment(value: _FiltroEstado.todos, label: Text('Todos')),
+                  ButtonSegment(
+                      value: _FiltroEstado.alertas,
+                      icon: Icon(Icons.warning_amber),
+                      label: Text('Con alerta')),
+                  ButtonSegment(
+                      value: _FiltroEstado.normales, label: Text('Normales')),
+                ],
+                selected: {_filtro},
+                onSelectionChanged: (s) => setState(() => _filtro = s.first),
+              ),
+            ),
+          ),
           SliverToBoxAdapter(
             child: SizedBox(
               height: 52,
@@ -56,12 +81,13 @@ class _InventarioScreenState extends State<InventarioScreen> {
                   final cats = snap.data ?? [];
                   return ListView(
                     scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     children: [
                       Padding(
                         padding: const EdgeInsets.only(right: 8),
                         child: ChoiceChip(
-                          label: const Text('Todos'),
+                          label: const Text('Todas'),
                           selected: prov.categoriaFiltro == null,
                           onSelected: (_) => prov.cargarTodos(),
                         ),
@@ -72,7 +98,8 @@ class _InventarioScreenState extends State<InventarioScreen> {
                           child: ChoiceChip(
                             label: Text(c.nombre),
                             selected: prov.categoriaFiltro == c.id,
-                            onSelected: (_) => prov.cargarTodos(categoriaId: c.id),
+                            onSelected: (_) =>
+                                prov.cargarTodos(categoriaId: c.id),
                           ),
                         ),
                     ],
@@ -84,29 +111,30 @@ class _InventarioScreenState extends State<InventarioScreen> {
           if (prov.cargandoTodos && prov.todos.isEmpty)
             const SliverFillRemaining(
                 child: Center(child: CircularProgressIndicator()))
-          else if (prov.todos.isEmpty)
+          else if (lista.isEmpty)
             const SliverFillRemaining(
                 child: Center(child: Text('No hay productos')))
           else
             SliverList(
               delegate: SliverChildBuilderDelegate(
                 (context, i) {
-                  final item = prov.todos[i];
+                  final item = lista[i];
                   return ProductoCard(
                     item: item,
                     onTap: () => _abrirDetalle(item),
                     onAgregarCarrito: () {
                       carrito.agregar(item.producto.id!);
                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                          content: Text('${item.producto.nombre} agregado al carrito'),
+                          content:
+                              Text('${item.producto.nombre} agregado al carrito'),
                           duration: const Duration(seconds: 1)));
                     },
                   );
                 },
-                childCount: prov.todos.length,
+                childCount: lista.length,
               ),
             ),
-          const SliverToBoxAdapter(child: SizedBox(height: 24)),
+          const SliverToBoxAdapter(child: SizedBox(height: 90)),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(

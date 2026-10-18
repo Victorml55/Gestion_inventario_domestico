@@ -37,11 +37,15 @@ class LoteRepositoryImpl implements LoteRepository {
   Future<void> eliminar(int id) async {
     final db = await _dbHelper.database;
     await db.delete('lote', where: 'id = ?', whereArgs: [id]);
+    try {
+      await NotificationService.cancelar(id);
+    } catch (_) {}
   }
 
   Future<void> _programar(int id, Lote l) async {
-    if (!l.alarmaActiva || l.fechaCaducidad == null) return;
     try {
+      await NotificationService.cancelar(id);
+      if (!l.alarmaActiva || l.fechaCaducidad == null || l.cantidad <= 0) return;
       final db = await _dbHelper.database;
       final r = await db.query('producto',
           columns: ['nombre'], where: 'id = ?', whereArgs: [l.productoId]);

@@ -9,4 +9,5 @@ class Routes {
   static const tiendas = '/tiendas';
   static const historial = '/historial';
   static const inventario = '/inventario';
+  static const estadisticas = '/estadisticas';
 }

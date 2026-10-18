@@ -1,5 +1,5 @@
 name: gestion_inventario_domestico
-description: "A new Flutter project."
+description: "Inventario doméstico / alacena con caducidad FEFO, calendario y alarmas locales."
 publish_to: 'none'
 
 version: 1.0.0+1
