@@ -38,9 +38,11 @@ class CarritoProvider extends ChangeNotifier {
   }
 
   Future<void> quitar(int id) async {
-    await _repo.quitar(id);
-    await cargar();
-  }
+  // Se quita de la lista al instante (lo exige Dismissible) y luego de la BD
+  lineas = lineas.where((l) => l.producto.producto.id != id).toList();
+  notifyListeners();
+  await _repo.quitar(id);
+}
 
   Future<void> vaciar() async {
     await _repo.vaciar();
