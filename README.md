@@ -96,9 +96,3 @@ flutter test
 > La base de datos `alacena.db` se crea en el almacenamiento de la aplicación al iniciarla por primera vez. El proyecto utiliza plugins nativos; las notificaciones y otras integraciones pueden requerir configuración adicional según la plataforma y el dispositivo.
 
 ---
-
-<div align="center">
-
-Hecho con Flutter
-
-</div>
