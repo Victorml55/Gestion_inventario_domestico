@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🥫 Mi Alacena
+# Mi Alacena
 
 ### Inventario doméstico y control de caducidades
 
@@ -11,21 +11,21 @@ y llevar un mejor control de las compras.
 
 ![Flutter](https://img.shields.io/badge/Flutter-framework-02569B?logo=flutter&logoColor=white)
 ![Dart](https://img.shields.io/badge/Dart-lenguaje-0175C2?logo=dart&logoColor=white)
-![Estado](https://img.shields.io/badge/Estado-pr%C3%A1ctica%20acad%C3%A9mica-00897B?logo=github)
+![Estado](https://img.shields.io/badge/Estado-Practica%202-00897B?logo=github)
 
-**Práctica de Desarrollos Móviles y Tecnologías en la Nube**
+**Practica 2: Práctica de Base de Datos LOCAL**
 
 </div>
 
 ---
 
-## 📖 Acerca del proyecto
+## Acerca del proyecto
 
 **Mi Alacena** es una aplicación desarrollada con Flutter para administrar un inventario doméstico desde el celular. Permite registrar productos y sus lotes, consultar existencias, anticipar caducidades y organizar las compras.
 
 El proyecto aplica conceptos de desarrollo móvil y persistencia de datos. **La versión actual almacena la información localmente con SQLite; todavía no incluye un servicio en la nube ni sincronización entre dispositivos.**
 
-## ✨ Funcionalidades
+## Funcionalidades
 
 - **Inventario:** administra productos, categorías, unidades, existencias mínimas e imágenes.
 - **Control por lotes:** registra cantidades y fechas de caducidad; también admite productos no perecederos.
@@ -38,7 +38,7 @@ El proyecto aplica conceptos de desarrollo móvil y persistencia de datos. **La 
 - **Historial y estadísticas:** revisa compras anteriores y compara el gasto por tienda.
 - **Catálogos configurables:** organiza productos con categorías y tiendas.
 
-## 🧰 Tecnologías
+## Tecnologías
 
 | Tecnología | Uso |
 | --- | --- |
@@ -49,7 +49,7 @@ El proyecto aplica conceptos de desarrollo móvil y persistencia de datos. **La 
 | `flutter_local_notifications` | Notificaciones locales de caducidad |
 | `table_calendar` | Calendario de alertas |
 
-## 🏗️ Organización del proyecto
+## Organización del proyecto
 
 El código de la aplicación está organizado por responsabilidades:
 
@@ -69,7 +69,7 @@ lib/
 
 La interfaz consume repositorios mediante Provider. Estos repositorios trabajan con la base de datos local y con los servicios de la aplicación.
 
-## 🚀 Cómo ejecutar
+## Cómo ejecutar
 
 ### Requisitos
 
@@ -95,18 +95,10 @@ flutter test
 
 > La base de datos `alacena.db` se crea en el almacenamiento de la aplicación al iniciarla por primera vez. El proyecto utiliza plugins nativos; las notificaciones y otras integraciones pueden requerir configuración adicional según la plataforma y el dispositivo.
 
-## ☁️ Sobre tecnologías en la nube
-
-Aunque esta práctica corresponde a la materia **Desarrollos Móviles y Tecnologías en la Nube**, la implementación actual es local-first: los datos se guardan en el dispositivo y no se comparten ni sincronizan automáticamente. Una posible evolución académica sería incorporar una API o un servicio como Firebase para agregar cuentas, copias de seguridad y sincronización entre dispositivos.
-
-## 🎓 Contexto académico
-
-Proyecto realizado como práctica académica para aplicar desarrollo de interfaces móviles, gestión de estado, persistencia local, organización por capas y notificaciones.
-
 ---
 
 <div align="center">
 
-Hecho con Flutter 💙
+Hecho con Flutter
 
 </div>
